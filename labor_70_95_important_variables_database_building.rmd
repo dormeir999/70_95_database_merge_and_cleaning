@@ -1,0 +1,450 @@
+ ---
+title: "labor_70_95_database"
+author: "Dor Meir"
+date: "1/21/2020"
+output:
+  html_document: default
+  pdf_document: default
+  word_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+# 70-95 important variables database building
+
+This program builds the 70-95 databaste of only important variables, from all different dta files. This markdown file (The program script) contains 3 chunks, to be run in their order (or all at once): 
+1. The first chunk contains all specific pre-defined hyperparameter and values that the program uses, such as the files locations, the name of the id variable, etc. 
+*if something changes in those values - you need to change things in this chunk!*
+This chunk also loads the packages which are being used in the program.
+2. The second chunk contains all the helper functions who are called in by each other and in the third chunck, in order to build the database. you can always call this chunck and than work on files seperatley. for example, after running this chunk you can use the file_to_variable(file_name) or file_to_variable_without_formatting_to_unique(file_name) functions, to load and prepare 70_95 file for work in R (after running the function, the file will turn into a data table variable  with the file_name). The file_to_variable_without_formatting_to_unique does minimum formatting on the file (does not make it in a unique id), so it works much faster than the file_to_variable function.
+*unless the files stractures changes dramatically, you shouldn't change this chunk.*
+3. The final chunk runs everything, using the hyperparamaters of the first chunk and the helper function of the second chunk, and saves the results to both csv and Rdata workspace files. *If you want to do extra things, you might write them here or add another chunk*.
+
+The running of this file takes LONG time, so...
+*Goodluck!*
+
+## 1. Define hyperparameters and Load pacakges
+
+```{r Define hyperparameters and Load pacakges}
+print("Please verify all the hyperparameters below are correct:")
+
+#dta_files_location <- "D:/Research/NeelieBT_Research_13800207/Data/Original Data/1.12.2019/test/"
+dta_files_location <- "D:/Research/NeelieBT_Research_13800207/Data/Original Data/1.12.2019/"
+id_variable_name <- "MisparZehut_fic"
+memory_limit <- 10000000
+extra_packages_path <- "D:/Research/3.6"
+min_year_possible_of_all_survey <- 1940
+max_year_possible_of_all_survey <- 2030
+mitzav_file_contains_the_word <- "mitzav"
+dataframe_name <- "df"
+final_database_file_name <- "70_95_df_important_variables"
+final_database_file_Rdata<-paste0(dta_files_location,final_database_file_name,".Rdata")
+final_database_file_csv<-paste0(dta_files_location,final_database_file_name,".csv")
+print("We're assuming two assumptions:")
+print("1. All files are dta stata files")
+print("2. mitzav file contain two tests: on 5th grade and on 8th grade")
+
+# Set the extra packages path:
+.libPaths(c(.libPaths(),extra_packages_path))
+# load packages:
+library(readstata13)
+library(dplyr)
+library(data.table)
+library(lubridate)
+library(stringr)
+library(rio)
+#readline(prompt="Check that all parameters are correct and that the packages were loaded correctly, and than press [enter] to continue")
+# set hyperparametes:
+print("Switching to the origional dta file folder so we can import them to R:")
+knitr::opts_chunk$set(root.dir = dta_files_location)
+setwd(dta_files_location)
+getwd()
+# we need all the memory we can get for this:
+memory.limit(size=memory_limit)
+#files_with_duplicate_id <- c("all_bog.dta","all_stud.dta","hachshara_mik.dta","muamadim.dta","saka_2001_2010.dta","saka_2012_2016.dta","mitzav.dta")
+# our list of files:
+list_of_files <- list.files(pattern = ".dta")
+# Choose only unique ID files:
+#list_of_files <- setdiff(list_of_files,files_with_duplicate_id)
+# Choose only non-unique ID files:
+#list_of_files <- files_with_duplicate_id
+# files with important variables
+#list_of_files <- 
+cat("The 70-95 file in the directory are:")
+print(list_of_files)
+cat("The total number of files is: ", length(list_of_files))
+```
+
+## 2. Define Helper functions
+
+```{r helper functions}
+setwd(dta_files_location)
+
+# find id_variable_column_number
+id_variable_column_number_file_name <- function(file_name){
+     return(which(colnames(get(file_name))==id_variable_name))
+  }
+id_variable_column_number_file <- function(file){
+     return(which(colnames(file)==id_variable_name))
+  }
+any_variable_column_number <- function(file_name,variable){
+     return(which(colnames(get(file_name))==variable))
+  }
+
+move_to_last <- function(file,column){
+    file[c(setdiff(names(file),column),column)]
+  }
+
+# move any column to first
+move_column_to_first <- function(file,column){
+      file[c(column,setdiff(names(file),column))]
+  }
+
+# move id column to first column
+move_id_to_first <- function(file){
+    #file[c(id_variable_name,setdiff(names(file),id_variable_name))]
+    setcolorder(file,c(id_variable_name,setdiff(names(file),id_variable_name)))
+   }  
+
+
+# Import a file's id column only, and sort by id number
+file_id_column_to_variable <- function(file_name){
+    assign(paste0(file_name),move_to_first(import((file_name),id_variable_name), select.cols = id_variable_name),envir = .GlobalEnv)
+    id_column_number <- id_variable_column_number_file_name(file_name)
+    setorderv(get(file_name),id_variable_name)
+  }
+
+
+# Find the Modes (most common value) function. for the first mode, use max().
+Mode <- function(x){
+  ux <- unique(x)
+  ux[which.max(tabulate(match(x,ux)))]
+  }
+
+# max function that ignore NA
+my.max <- function(x){
+  x <- as.numeric(unlist(x))
+  ifelse (!all(is.na(x)),max(x,na.rm=T),NA)
+} 
+
+# Find the year column function (4 characters, mode is between 1850 and 2100) using the Mode function from above
+find_year_column <- function(file){
+  number_of_chars <- nchar(lapply(file, my.max))
+  potential_number_of_year_columns <- list()
+  i <-1
+  for (num in number_of_chars){
+     if  (num==4){
+       potential_number_of_year_columns[length(potential_number_of_year_columns)+1] <- i
+     }
+    i=i+1
+  }
+  potential_number_of_year_columns <- unlist(potential_number_of_year_columns)
+  if (length(potential_number_of_year_columns)>1){
+    for (column in potential_number_of_year_columns){
+      cat("\nColumn",column,"has 4 characters, checking the most common value:")
+      mode_file_column <- sort(file[[column]],decreasing = TRUE)[1]
+      cat("\nThe most common value is ",mode_file_column)
+      if ((mode_file_column>min_year_possible_of_all_survey)&(mode_file_column<max_year_possible_of_all_survey)){
+        cat("\n",mode_file_column, "is between", min_year_possible_of_all_survey, "and",max_year_possible_of_all_survey,", so we'll set column no.", column, "as the year column.")
+        year_column_name <- colnames(file)[column]
+        cat("The year column name is:",year_column_name)
+        return(year_column_name)
+        #break
+      }
+    }
+    potential_number_of_year_columns <- year_column_name
+  }
+  return(unlist(colnames(file)[potential_number_of_year_columns]))
+  }
+
+# Copy df to new column of variable with proper year
+copy_df_to_new_column_by_year <- function(get_file,rows_to_copy,columns_to_copy,years_to_copy){
+  # copy the values:
+  number_of_rows_to_copy <- length(rows_to_copy)
+  cat("\nNumber of rows to copy: ", number_of_rows_to_copy)
+  for (i in seq_along(rows_to_copy)){
+    cat("\n", sprintf("%.8f",i/number_of_rows_to_copy),"%")
+    for (j in seq_along(columns_to_copy)){
+    column_to_paste <- paste0(columns_to_copy[j],years_to_copy[i])
+    get_file[rows_to_copy[i],column_to_paste]=get_file[rows_to_copy[i],columns_to_copy[j]]
+    }
+    }
+  return(get_file)    
+}
+
+# Copy df to new column of variable with proper year - for mapply
+copy_non_unique_columnn_to_unique <- function(row,get_file,file_name,year_column,column){
+  cat("\n", sprintf("%.1f",row/nrow(get_file)*100,"%"))
+  get_file[[paste0(column,get_file[[year_column]][row])]][row] = get_file[[column]][row]
+  return(get_file)
+  #assign('get_file',get_file,envir = .GlobalEnv)
+}
+
+  
+# expand a non unique id df (with several rows for some ids) to unique id (one row for each id), by adding columns for different years
+convert_non_unique_ids_file_to_unique <- function(file_name){
+  get_file <- get(file_name)
+  year_column <- find_year_column(get_file)
+  print("We've got the year column, shaping the file to unique id, this will take a while...")
+  year_column_number <- any_variable_column_number(file_name,year_column)
+  list_of_years <- sort(unique(get_file[[year_column]]))
+  number_of_years <- length(sort(unique(get_file[[year_column]])))
+  origional_columns <- colnames(get_file)
+  id_column_number <- id_variable_column_number_file_name(file_name)
+  columns_to_add <- unlist(lapply(setdiff(colnames(get_file),c(id_variable_name,year_column)), paste0,list_of_years))
+   print("Adding new empry columns . . .")
+  # Add new empty columns
+  get_file[,columns_to_add] <- NA
+  print("Copying the non-NA rows to the new empty columns - this will take a while . . .")
+  # copy the non NA rows to the new empty columns
+  #years_to_copy <- get_file[[year_column]][which(!is.na(get_file[[year_column]]))]
+  rows_to_copy <- which(!is.na(get_file[[year_column]]))
+  columns_to_copy <- origional_columns[-c(id_column_number,year_column_number)]
+  # The actual copy:
+  for (column in columns_to_copy){
+    get_file <- lapply(rows_to_copy,copy_non_unique_columnn_to_unique,get_file,file_name,year_column,column)
+  }
+  
+  #get_file <- copy_df_to_new_column_by_year(get_file,rows_to_copy,columns_to_copy,years_to_copy)
+  
+  print("Done! Delete the year column and the origional columns who were coppied . . .")
+  # delete the year column and the origional columns who were coppied:
+  get_file[,c(year_column,columns_to_copy)] <- NULL
+  print("Squeezing all non-unique id rows into one row . . .")
+  # squeeze all non-unique id rows into one row
+  get_file = aggregate(get_file[-id_column_number], by = list(get_file[[id_variable_name]]), FUN = mean, na.rm=TRUE)
+  print("Converting Nan's to NA . . .")
+  # Convert Nan's to NA
+  get_file[is.na(get_file)]=NA
+  print("Renaming the id_variable_name back to it's name: . . .")
+  # Rename the id_variable_name back to it's name:
+  colnames(get_file)[1] <- id_variable_name
+  print("Assigning the new df to the old one: . . .")
+  # assign the new df to the old one:
+  assign(paste0(file_name),get_file,envir = .GlobalEnv)
+  print("Finished converting to unique id!")
+  }
+
+
+
+# Return TRUE if non-unique id file
+is_unique_id_file <- function(file_name){
+  percent_of_non_uniques_lines <- 1-length(unique(get(file_name)[[id_variable_name]]))/length(get(file_name)[[id_variable_name]])
+  if (percent_of_non_uniques_lines==0){
+    return(TRUE)
+  }
+  return(FALSE)
+  }
+
+# Split the mitzav file in the two files containing two exams
+split_mitzav_file <-function(file_name){
+  file <- get(file_name)
+  cat("\nThe file is a mitzav file, splitting it to 2 files:")
+  mitzav_splitted_file_number_of_column = length(colnames(file)[-1])/2
+  mitzav1_cols <- colnames(file[1:(1+mitzav_splitted_file_number_of_column)])
+  mitzav1_name <- (paste0(file_name,1))
+  assign(mitzav1_name,file[,on=mitzav1_cols],envir = .GlobalEnv)
+  mitzav2_cols <- c(id_variable_name,setdiff(colnames(file),mitzav1_cols))
+  mitzav2_name <- (paste0(file_name,2))
+  assign(mitzav2_name,file[,on=mitzav2_cols],envir = .GlobalEnv)
+  # add the files to list_of_files
+  origional_mitzav_file_index <- match(file_name,list_of_files)
+  ## file 1:
+  list_of_files[origional_mitzav_file_index]=paste0(file_name,1)
+  ## file 2:
+  list_of_files <- append(list_of_files,paste0(file_name,2),origional_mitzav_file_index)
+  # fix mitazv files if they have duplicate columns
+    if (is_unique_id_file(mitzav1_name)==FALSE){
+     cat("\n",mitzav1_name, " has non-unique ID, fixing it now: ")
+     convert_non_unique_ids_file_to_unique(mitzav1_name)
+    }
+    if (is_unique_id_file(mitzav2_name)==FALSE){
+       cat("\n",mitzav2_name, " has non-unique ID, fixing it now: ")
+       convert_non_unique_ids_file_to_unique(mitzav2_name)
+     }
+  }
+
+add_file_name_to_columns <-function(file_name){
+    get_file<-get(file_name)
+    id_column_number <- which(colnames(get_file)==id_variable_name)
+    colnames(get_file)<-paste(colnames(get_file),file_name,sep ="_")
+    colnames(get_file)[id_column_number]<-id_variable_name
+    assign(paste0(file_name),get_file,envir = .GlobalEnv)
+}
+
+# Import a file, sort by id number, move id column to first only if not already first, and 
+file_to_variable <- function(file_name){
+  assign(paste0(file_name),import(file_name, setclass = "data.table"),envir = .GlobalEnv)
+  # if id column is not first, make it first
+  if  (id_variable_column_number_file(get(file_name))!=1){
+    move_id_to_first(get(file_name))
+  }
+  # Order data by id number
+  setorderv(get(file_name),id_variable_name)
+  # If it's mitzav file, split it into the two mitav tests:
+    if (str_extract_all(file_name,mitzav_file_contains_the_word,simplify = FALSE)==mitzav_file_contains_the_word) {
+    split_mitzav_file(file_name)
+  }
+  else{
+    # if the file has several lines for each id (with different years for each line), convert it into a unique id file using the creation of new columns:
+     if (is_unique_id_file(file_name)==FALSE){
+       cat("\n",file_name, " has non-unique ID, fixing it now: ")
+       convert_non_unique_ids_file_to_unique(file_name)
+     }
+  }
+  add_file_name_to_columns(file_name)
+}
+
+# Import a file, sort by id number, move id column to first only if not already first, and 
+file_to_variable_without_formatting_to_unique <- function(file_name){
+  print(file_name)
+  assign(paste0(file_name),import(file_name, setclass = "data.table"),envir = .GlobalEnv)
+  # if id column is not first, make it first
+  if  (id_variable_column_number_file(get(file_name))!=1){
+    move_id_to_first(get(file_name))
+  }
+  # Order data by id number
+  setorderv(get(file_name),id_variable_name)
+}
+
+# THIS FUNCTION IS NOT WORKING! Don't use, we use a loop instead...
+merge_file_to_df <-function(file_name,df){
+ cat("\nImporting the file:",file_name)
+ file_to_variable(file_name)
+ cat("\nMerging to df...")
+ get_file<-get(file_name)
+ df <- full_join(x = df, y = get_file, by = id_variable_name)
+ assign(dataframe_name,df,envir = .GlobalEnv)
+ #assign(paste0(df),df,envir = .GlobalEnv)
+ cat("\nDone! The memory usage is:", memory.size())
+ rm(list=ls(pattern=file_name),envir = .GlobalEnv)
+ gc()
+ cat("\nAfter cleanup, the memory usage is:", memory.size()," out of", memory.limit())
+ cat("The variable names of the df are:")
+ cat(colnames(df))
+}
+
+file_format_only <- function(file_name){
+    # if the file has several lines for each id (with different years for each line), convert it into a unique id file using the creation of new columns:
+     if (is_unique_id_file(file_name)==FALSE){
+       cat("\n",file_name, " has non-unique ID, fixing it now: ")
+       convert_non_unique_ids_file_to_unique(file_name)
+     }
+  add_file_name_to_columns(file_name)
+}
+
+```
+
+## 3. Build 70-95 important variables only Database 
+
+```{r import and merge}
+setwd(dta_files_location)
+
+print("1. Loading all files to memory and subsetting the files to only important variables")
+
+file_to_variable_without_formatting_to_unique("mirsham1.dta")
+mirsham1.dta <- (mirsham1.dta[,c("MisparZehut_fic","MisparZehutAv_fic","Koderetzledatav","Semelkvutzotuchlusia","Yearleda","KodMin")])
+file_to_variable_without_formatting_to_unique("mirsham2.dta")
+mirsham2.dta <- mirsham2.dta[,c("MisparZehut_fic","SemelYishuv_2017")]
+file_to_variable_without_formatting_to_unique("talmidim.dta")
+talmidim.dta <- talmidim.dta[,c]
+talmidim.dta <- talmidim.dta[,c("MisparZehut_fic","last_kita","pikuach_last_kita")]
+file_to_variable_without_formatting_to_unique("talmidim_ugud.dta")
+talmidim_ugud.dta <- talmidim_ugud.dta[,c("MisparZehut_fic","Nativ_uGud","pikuach_uGud","smshool_UGUD_fic")]
+file_to_variable_without_formatting_to_unique("mitzav.dta")
+mitzav.dta <- mitzav.dta[,c("MisparZehut_fic","hebsum_5")]
+file_to_variable_without_formatting_to_unique("bagrut.dta")
+bagrut.dta <- bagrut.dta[,c("MisparZehut_fic","zakaut")]
+file_to_variable_without_formatting_to_unique("tamat.dta")
+tamat.dta <- tamat.dta[,c("MisparZehut_fic","megama_tamat")]
+file_to_variable_without_formatting_to_unique("tal_bog_mahat.dta")
+tal_bog_mahat.dta <- tal_bog_mahat.dta[,c("MisparZehut_fic","MaatDiploma")]
+file_to_variable_without_formatting_to_unique("psychometry.dta")
+psychometry.dta <- psychometry.dta[,c("MisparZehut_fic","MaxScore")]
+file_to_variable_without_formatting_to_unique("mechinot.dta")
+mechinot.dta <- mechinot.dta[,c("MisparZehut_fic")]
+mechinot.dta <- mechinot.dta[,c("MisparZehut_fic","mech")]
+file_to_variable_without_formatting_to_unique("all_stud.dta")
+all_stud.dta <- all_stud.dta[,c("MisparZehut_fic","sug_mosadacademi_stud","shnatlimoudim_stud")]
+file_to_variable_without_formatting_to_unique("all_bog.dta")
+all_bog.dta <- all_bog.dta[,c("MisparZehut_fic","toar","Shnat_KabalatToar")]
+file_to_variable_without_formatting_to_unique("mirshamhaskala.dta")
+mirshamhaskala.dta <- mirshamhaskala.dta[,c("MisparZehut_fic","SemelTeudaGvohaBeyoter","ShnotLimudKolHaMekorot")]
+file_to_variable_without_formatting_to_unique("saka_2001_2010.dta")
+saka_2001_2010.dta <- saka_2001_2010.dta[,c("MisparZehut_fic","TchunatAvodaShvuit","ShnatSeker")]
+file_to_variable_without_formatting_to_unique("saka_2012_2016.dta")
+saka_2012_2016.dta <- saka_2012_2016.dta[,c("MisparZehut_fic","TchunatAvodaShvuit","ShnatSeker")]
+file_to_variable_without_formatting_to_unique("hachshara_mik.dta")
+hachshara_mik.dta <- hachshara_mik.dta[,c("MisparZehut_fic","maslul1","anaf1","status1","shnat_syom","boger")]
+file_to_variable_without_formatting_to_unique("ramat_haredim.dta")
+file_to_variable_without_formatting_to_unique("datiut.dta")
+list_of_hachnasot_files <- c("hahnasot_1995.dta","hahnasot_1996.dta","hahnasot_1997.dta","hahnasot_1998.dta","hahnasot_1999.dta","hahnasot_2000.dta","hahnasot_2001.dta","hahnasot_2002.dta","hahnasot_2003.dta","hahnasot_2004.dta","hahnasot_2005.dta","hahnasot_2006.dta","hahnasot_2007.dta","hahnasot_2008.dta","hahnasot_2009.dta","hahnasot_2010.dta","hahnasot_2011.dta","hahnasot_2012.dta","hahnasot_2013.dta","hahnasot_2014.dta","hahnasot_2015.dta","hahnasot_2016.dta")
+lapply(list_of_hachnasot_files, file_to_variable_without_formatting_to_unique)
+hahnasot_1995.dta <- hahnasot_1995.dta[,c("MisparZehut_fic","HahnasaSahar","Anaf_sahar")]
+hahnasot_1996.dta <- hahnasot_1996.dta[,c("MisparZehut_fic","hahnasasahar","Anaf_sahar")]
+hahnasot_1997.dta <- hahnasot_1997.dta[,c("MisparZehut_fic","hahnasasahar","Anaf_sahar")]
+hahnasot_1998.dta <- hahnasot_1998.dta[,c("MisparZehut_fic","hahnasasahar","Anaf_sahar")]
+hahnasot_1999.dta <- hahnasot_1999.dta[,c("MisparZehut_fic","HahnasaSahar","Hahnasa_iskit","Anaf_sahar")]
+hahnasot_2000.dta <- hahnasot_2000.dta[,c("MisparZehut_fic","HahnasaSahar","Hahnasa_iskit","Anaf_sahar")]
+hahnasot_2001.dta <- hahnasot_2001.dta[,c("MisparZehut_fic","HahnasaSahar","Hahnasa_iskit","Anaf_sahar")]
+hahnasot_2002.dta <- hahnasot_2002.dta[,c("MisparZehut_fic","HahnasaSahar","Hahnasa_iskit","Anaf_sahar")]
+hahnasot_2003.dta <- hahnasot_2003.dta[,c("MisparZehut_fic","HahnasaSahar","Hahnasa_iskit","Anaf_sahar")]
+hahnasot_2004.dta <- hahnasot_2004.dta[,c("MisparZehut_fic","HahnasaSahar","Hahnasa_iskit","Anaf_sahar")]
+hahnasot_2005.dta <- hahnasot_2005.dta[,c("MisparZehut_fic","HahnasaSahar","Hahnasa_iskit","Anaf_sahar")]
+hahnasot_2006.dta <- hahnasot_2006.dta[,c("MisparZehut_fic","HahnasaSahar","Hahnasa_iskit","Anaf_sahar")]
+hahnasot_2007.dta <- hahnasot_2007.dta[,c("MisparZehut_fic","HahnasaSahar","Hahnasa_iskit","Anaf_sahar")]
+hahnasot_2008.dta <- hahnasot_2008.dta[,c("MisparZehut_fic","HahnasaSahar","Hahnasa_iskit","Anaf_sahar")]
+hahnasot_2009.dta <- hahnasot_2009.dta[,c("MisparZehut_fic","HahnasaSahar","Hahnasa_iskit","Anaf_sahar")]
+hahnasot_2010.dta <- hahnasot_2010.dta[,c("MisparZehut_fic","HahnasaSahar","Hahnasa_iskit","Anaf_sahar")]
+hahnasot_2011.dta <- hahnasot_2011.dta[,c("MisparZehut_fic","HahnasaSahar","Hahnasa_iskit","Anaf_sahar")]
+hahnasot_2012.dta <- hahnasot_2012.dta[,c("MisparZehut_fic","HahnasaSahar","Hahnasa_iskit","Anaf_sahar")]
+hahnasot_2013.dta <- hahnasot_2013.dta[,c("MisparZehut_fic","HahnasaSahar","Hahnasa_iskit","Anaf_sahar")]
+hahnasot_2014.dta <- hahnasot_2014.dta[,c("MisparZehut_fic","HahnasaSahar","Hahnasa_iskit","Anaf_sahar")]
+hahnasot_2015.dta <- hahnasot_2015.dta[,c("MisparZehut_fic","HahnasaSahar","Hahnasa_iskit","Anaf_sahar")]
+hahnasot_2016.dta <- hahnasot_2016.dta[,c("MisparZehut_fic","HahnasaSahar","Hahnasa_iskit","Anaf_sahar")]
+list_of_hachnasot_bz_files <- c("hahnasot_bz_1995.dta","hahnasot_bz_2000.dta","hahnasot_bz_2002.dta","hahnasot_bz_2003.dta","hahnasot_bz_2004.dta","hahnasot_bz_2005.dta","hahnasot_bz_2006.dta","hahnasot_bz_2007.dta","hahnasot_bz_2008.dta","hahnasot_bz_2009.dta","hahnasot_bz_2010.dta","hahnasot_bz_2011.dta","hahnasot_bz_2012.dta","hahnasot_bz_2013.dta","hahnasot_bz_2014.dta","hahnasot_bz_2015.dta","hahnasot_bz_2016.dta")
+lapply(list_of_hachnasot_bz_files, file_to_variable_without_formatting_to_unique)
+file_to_variable_without_formatting_to_unique("hahnasot_av.dta")
+hahnasot_av_columns <- colnames(hahnasot_av.dta)[0:43]
+hahnasot_av.dta <- hahnasot_av.dta[,c("MisparZehut_fic","HahnasaSahar1985","HahnasaSahar1986","HahnasaSahar1987","HahnasaSahar1988","HahnasaSahar1989","HahnasaSahar1990","HahnasaSahar1991","HahnasaSahar1992","HahnasaSahar1993","HahnasaSahar1994","HahnasaSahar1995","HahnasaSahar1996","HahnasaSahar1997","HahnasaSahar1998","HahnasaSahar1999","Hahnasa_iskit1999","HahnasaSahar2000","Hahnasa_iskit2000","HahnasaSahar2001","Hahnasa_iskit2001","HahnasaSahar2002","Hahnasa_iskit2002","HahnasaSahar2003","Hahnasa_iskit2003","HahnasaSahar2004","Hahnasa_iskit2004","HahnasaSahar2005","Hahnasa_iskit2005","HahnasaSahar2006","Hahnasa_iskit2006","HahnasaSahar2007","Hahnasa_iskit2007","HahnasaSahar2008","Hahnasa_iskit2008","HahnasaSahar2009","Hahnasa_iskit2009","HahnasaSahar2010","Hahnasa_iskit2010","HahnasaSahar2011","Hahnasa_iskit2011","HahnasaSahar2012","Hahnasa_iskit2012")]
+file_to_variable_without_formatting_to_unique("hahnasot_em.dta")
+hahnasot_em.dta <- hahnasot_em.dta[,c("MisparZehut_fic","HahnasaSahar1985","HahnasaSahar1986","HahnasaSahar1987","HahnasaSahar1988","HahnasaSahar1989","HahnasaSahar1990","HahnasaSahar1991","HahnasaSahar1992","HahnasaSahar1993","HahnasaSahar1994","HahnasaSahar1995","HahnasaSahar1996","HahnasaSahar1997","HahnasaSahar1998","HahnasaSahar1999","Hahnasa_iskit1999","HahnasaSahar2000","Hahnasa_iskit2000","HahnasaSahar2001","Hahnasa_iskit2001","HahnasaSahar2002","Hahnasa_iskit2002","HahnasaSahar2003","Hahnasa_iskit2003","HahnasaSahar2004","Hahnasa_iskit2004","HahnasaSahar2005","Hahnasa_iskit2005","HahnasaSahar2006","Hahnasa_iskit2006","HahnasaSahar2007","Hahnasa_iskit2007","HahnasaSahar2008","Hahnasa_iskit2008","HahnasaSahar2009","Hahnasa_iskit2009","HahnasaSahar2010","Hahnasa_iskit2010","HahnasaSahar2011","Hahnasa_iskit2011","HahnasaSahar2012","Hahnasa_iskit2012")]
+file_to_variable_without_formatting_to_unique("anafim_sahar.dta")
+
+print("2. preparing all files and merging to df")
+list_of_files_in_memory <- ls(pattern = ".dta")
+lapply(list_of_files_in_memory, file_format_only)
+
+print("Merge first file:")
+file1 <- list_of_files[1]
+cat("\nMerging ", file1, " to df...")
+file_to_variable(file1)
+df <- get(file1)
+rm(list=ls(pattern=list_of_files[1]))
+gc()
+cat("\nDone handling the first file. After cleanup, the memory usage is:", memory.size())
+
+# Merge all other files to df, one-by-one using one-to-many merge, and delete the old files
+for (file_name in list_of_files[-1]){
+cat("\nImportig the file:",file_name)
+ file_to_variable(file_name)
+ cat("\nMerging to df...")
+ get_file<-get(file_name)
+ df <- full_join(x = df, y = get_file, by = id_variable_name)
+ assign(dataframe_name,df,envir = .GlobalEnv)
+ #assign(paste0(df),df,envir = .GlobalEnv)
+ cat("\nDone! The memory usage is:", memory.size()," or ",round(memory.size()/memory.limit()),"%")
+ rm(list=ls(pattern=file_name),envir = .GlobalEnv)
+ gc()
+ cat("\nAfter cleanup, the memory `usage is:", memory.size()," or ",round(memory.size()/memory.limit()),"%")
+}
+
+print("We're Done! we're not allowd to print a sample of the unified df, but there are the df's columns:")
+print(colnames(df))
+print("Saving the final df into Rdata file (with functions, for later work on R), and csv file only the final df (for other frameworks:")
+save.image(file = final_database_file_Rdata)
+write.csv(df,final_database_file_csv, row.names = FALSE)
+
+```
+
